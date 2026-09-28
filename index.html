@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#e8edf4; --panel:#f6f8fb; --ink:#16223b; --muted:#5d6b85; --line:#cfd8e6;
+  --me:#16223b; --me-ink:#f6f8fb; --bot:#ffffff; --accent:#2b6be6; --err:#b3261e;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#0f1524; --panel:#172036; --ink:#e6ecf7; --muted:#93a1bd; --line:#2a3552;
+        --me:#2b6be6; --me-ink:#fff; --bot:#1d2844; --accent:#6b9bff; --err:#ff8a80;}
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font-family:"Noto Sans KR",system-ui,sans-serif;background:var(--bg);color:var(--ink);
+  display:grid;grid-template-columns:300px 1fr;
+  padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+aside{background:var(--panel);border-right:1px solid var(--line);padding:20px;overflow:auto}
+summary{font-size:1.1rem;font-weight:700;margin-bottom:6px}
+label{display:block;font-size:.8rem;color:var(--muted);margin:14px 0 5px}
+input,textarea{width:100%;font:inherit;font-size:.9rem;color:var(--ink);background:var(--bg);
+  border:1px solid var(--line);border-radius:8px;padding:9px 10px}
+textarea{resize:vertical;min-height:90px}
+input:focus,textarea:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.row{display:flex;gap:8px;margin-top:14px}
+button{font:inherit;font-size:.9rem;border:1px solid var(--line);background:var(--bg);color:var(--ink);
+  border-radius:8px;padding:8px 12px;cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:500}
+button:disabled{opacity:.5;cursor:default}
+#status{font-size:.8rem;color:var(--muted);margin-top:12px;min-height:1.2em}
+main{display:flex;flex-direction:column;min-width:0;height:100%}
+#log{flex:1;overflow:auto;padding:24px;display:flex;flex-direction:column;gap:12px}
+.msg{max-width:min(680px,88%);padding:10px 14px;border-radius:14px;line-height:1.6;white-space:pre-wrap;
+  overflow-wrap:anywhere;font-size:.95rem}
+.me{align-self:flex-end;background:var(--me);color:var(--me-ink);border-bottom-right-radius:4px}
+.bot{align-self:flex-start;background:var(--bot);border:1px solid var(--line);border-bottom-left-radius:4px}
+.err{align-self:center;color:var(--err);font-size:.85rem;background:none;border:1px solid var(--err)}
+.empty{margin:auto;color:var(--muted);text-align:center;font-size:.95rem;line-height:1.7}
+form{display:flex;gap:8px;padding:14px 24px 18px;border-top:1px solid var(--line);background:var(--panel)}
+form textarea{min-height:44px;max-height:160px;resize:none}
+@media (max-width:760px){
+  body{grid-template-columns:1fr;grid-template-rows:auto 1fr}
+  aside{border-right:0;border-bottom:1px solid var(--line);padding:12px 16px}
+  aside details summary{cursor:pointer;font-weight:700}
+  #log{padding:16px} form{padding:10px 16px 14px}
+}
+@media (prefers-reduced-motion:no-preference){.cursor::after{content:"▍";animation:b 1s steps(2) infinite}}
+@keyframes b{50%{opacity:0}}
+</style>
+</head>
+<body>
+<aside>
+  <details id="cfg" open>
+    <summary>설정</summary>
+    <label for="url">ngrok 주소</label>
+    <input id="url" placeholder="https://xxxx.ngrok-free.dev" autocomplete="off">
+    <label for="model">모델 이름</label>
+    <input id="model" list="models" value="gemma:7b-instruct" autocomplete="off">
+    <datalist id="models"></datalist>
+    <div class="row">
+      <button type="button" id="check">연결 확인</button>
+      <button type="button" id="clear">대화 지우기</button>
+    </div>
+    <div id="status" role="status"></div>
+  </details>
+</aside>
+<main>
+  <div id="log"><div class="empty">주소를 입력하고 연결을 확인한 뒤<br>메시지를 보내 보세요.</div></div>
+  <form id="form">
+    <textarea id="input" rows="1" placeholder="메시지 입력 (Enter 전송, Shift+Enter 줄바꿈)"></textarea>
+    <button class="primary" id="send" type="submit">보내기</button>
+    <button type="button" id="stop" hidden>중지</button>
+  </form>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const store = {
+  get(k){ try{ return localStorage.getItem(k) }catch(e){ return null } },
+  set(k,v){ try{ localStorage.setItem(k,v) }catch(e){} }
+};
+["url","model"].forEach(k => { const v = store.get("pocat_"+k); if(v) $(k).value = v;
+  $(k).addEventListener("input", () => store.set("pocat_"+k, $(k).value)); });
+
+const HEADERS = {"Content-Type":"application/json","ngrok-skip-browser-warning":"1"};
+const base = () => $("url").value.trim().replace(/\/+$/,"");
+let history = [], controller = null;
+
+function status(t){ $("status").textContent = t; }
+function add(cls, text){
+  const log = $("log");
+  const empty = log.querySelector(".empty"); if(empty) empty.remove();
+  const d = document.createElement("div"); d.className = "msg "+cls; d.textContent = text;
+  log.appendChild(d); log.scrollTop = log.scrollHeight; return d;
+}
+
+$("check").onclick = async () => {
+  if(!base()) return status("ngrok 주소를 입력하세요.");
+  status("확인 중...");
+  try{
+    const r = await fetch(base()+"/api/tags",{headers:HEADERS});
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    const j = await r.json();
+    const names = (j.models||[]).map(m=>m.name);
+    $("models").innerHTML = names.map(n=>`<option value="${n}">`).join("");
+    if(names.length && !names.includes($("model").value)) $("model").value = names[0];
+    status("연결됨 · 모델: "+(names.join(", ")||"없음"));
+  }catch(e){
+    status("연결 실패: 주소가 최신인지, Colab 셀이 실행 중인지 확인하세요. ("+e.message+")");
+  }
+};
+
+$("clear").onclick = () => { history = [];
+  $("log").innerHTML = '<div class="empty">대화를 지웠습니다.</div>'; };
+
+$("stop").onclick = () => controller && controller.abort();
+
+$("input").addEventListener("keydown", e => {
+  if(e.key==="Enter" && !e.shiftKey && !e.isComposing){ e.preventDefault(); $("form").requestSubmit(); }
+});
+$("input").addEventListener("input", e => { e.target.style.height="auto";
+  e.target.style.height = Math.min(e.target.scrollHeight,160)+"px"; });
+
+$("form").onsubmit = async e => {
+  e.preventDefault();
+  const text = $("input").value.trim();
+  if(!text) return;
+  if(!base()) return add("err","ngrok 주소를 입력하세요.");
+  $("input").value = ""; $("input").style.height = "auto";
+  history.push({role:"user",content:text}); add("me",text);
+  const out = add("bot",""); out.classList.add("cursor");
+  $("send").disabled = true; $("stop").hidden = false;
+  controller = new AbortController();
+  const t0 = performance.now();
+  let reply = "";
+  try{
+    const r = await fetch(base()+"/api/chat",{method:"POST",headers:HEADERS,signal:controller.signal,
+      body:JSON.stringify({model:$("model").value.trim(),messages:history,stream:true})});
+    if(!r.ok){
+      let msg = "HTTP "+r.status;
+      try{ const j = await r.json(); if(j.error) msg += " · "+j.error }catch(_){}
+      throw new Error(msg);
+    }
+    const reader = r.body.getReader(), dec = new TextDecoder(); let buf = "";
+    while(true){
+      const {done,value} = await reader.read(); if(done) break;
+      buf += dec.decode(value,{stream:true});
+      const lines = buf.split("\n"); buf = lines.pop();
+      for(const l of lines){ if(!l.trim()) continue;
+        const j = JSON.parse(l);
+        if(j.error) throw new Error(j.error);
+        if(j.message && j.message.content){ reply += j.message.content; out.textContent = reply;
+          $("log").scrollTop = $("log").scrollHeight; }
+      }
+    }
+    history.push({role:"assistant",content:reply});
+    status("완료 ("+((performance.now()-t0)/1000).toFixed(1)+"초)");
+  }catch(err){
+    if(err.name==="AbortError"){ if(reply) history.push({role:"assistant",content:reply}); status("중지됨"); }
+    else{ if(!reply) out.remove(); history.pop();
+      add("err","요청 실패: "+err.message+" — 모델 이름과 주소를 확인하세요."); status(""); }
+  }finally{
+    out.classList.remove("cursor");
+    $("send").disabled = false; $("stop").hidden = true; controller = null;
+  }
+};
+</script>
+</body>
+</html>
