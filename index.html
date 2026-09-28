@@ -59,8 +59,7 @@ form textarea{min-height:44px;max-height:160px;resize:none}
     <label for="url">ngrok 주소</label>
     <input id="url" placeholder="https://xxxx.ngrok-free.dev" autocomplete="off">
     <label for="model">모델 이름</label>
-    <input id="model" list="models" value="gemma:7b-instruct" autocomplete="off">
-    <datalist id="models"></datalist>
+    <input id="model" value="gemma:7b-instruct" autocomplete="off">
     <div class="row">
       <button type="button" id="check">연결 확인</button>
       <button type="button" id="clear">대화 지우기</button>
@@ -100,15 +99,17 @@ function add(cls, text){
 
 $("check").onclick = async () => {
   if(!base()) return status("ngrok 주소를 입력하세요.");
+  const model = $("model").value.trim();
+  if(!model) return status("모델 이름을 입력하세요.");
   status("확인 중...");
   try{
-    const r = await fetch(base()+"/api/tags",{headers:HEADERS});
-    if(!r.ok) throw new Error("HTTP "+r.status);
+    const r = await fetch(base()+"/api/show",{method:"POST",headers:HEADERS,
+      body:JSON.stringify({model:model,name:model})});
+    const type = r.headers.get("content-type")||"";
+    if(!type.includes("json")) throw new Error("Ollama가 아닌 응답이에요. 주소가 최신인지 확인하세요.");
     const j = await r.json();
-    const names = (j.models||[]).map(m=>m.name);
-    $("models").innerHTML = names.map(n=>`<option value="${n}">`).join("");
-    if(names.length && !names.includes($("model").value)) $("model").value = names[0];
-    status("연결됨 · 모델: "+(names.join(", ")||"없음"));
+    if(r.ok) status("연결됨 · 모델 확인됨: "+model);
+    else status("서버는 연결됐지만 모델을 찾지 못했어요: "+(j.error||("HTTP "+r.status)));
   }catch(e){
     status("연결 실패: 주소가 최신인지, Colab 셀이 실행 중인지 확인하세요. ("+e.message+")");
   }
