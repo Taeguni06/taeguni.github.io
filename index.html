@@ -86,7 +86,7 @@ const store = {
 ["url","model"].forEach(k => { const v = store.get("pocat_"+k); if(v) $(k).value = v;
   $(k).addEventListener("input", () => store.set("pocat_"+k, $(k).value)); });
 
-const HEADERS = {"Content-Type":"application/json","ngrok-skip-browser-warning":"1"};
+const HEADERS = {"Content-Type":"application/json"};
 const base = () => $("url").value.trim().replace(/\/+$/,"");
 let history = [], controller = null;
 
